@@ -1,52 +1,124 @@
-# Product Viewer — React + Three.js + WebXR + USDZ (iOS)
+# VULF Interactive
 
-A minimal, production-ready template to view GLB models, enter WebXR (VR & AR), and provide an iOS AR fallback via USDZ (Quick Look).
+Premium 3D Product Configurators & WebXR Experiences
 
-## Features
+## 🚀 About
 
-- Load `.glb/.gltf` via file picker or drag & drop
-- WebXR: VR and AR
-- iOS AR fallback with Quick Look (`rel="ar"` link to `.usdz`)
-- Studio lighting (key/fill/rim + RoomEnvironment), soft ground shadows
-- Orbit controls with auto-rotate
-- Tone mapping exposure slider (ACES Filmic)
-- Draco support (drop decoders in `/public/draco`)
-- Vite + React + TypeScript
+VULF Interactive delivers ultra-tier interactive web experiences featuring:
 
-## Quick Start
+- **Advanced 3D Product Visualization** - Three.js powered WebGL rendering
+- **WebXR & AR Integration** - USDZ (iOS) and WebXR (Android) support
+- **Premium UI/UX Design** - Glassmorphism, parallax, and GSAP animations
+- **Performance Optimized** - Mobile-first, responsive, production-ready
+
+## 📦 Tech Stack
+
+- **React 18** + TypeScript
+- **Three.js** - 3D rendering and WebGL
+- **GSAP** - Advanced animations
+- **Vite** - Lightning-fast build tool
+- **pnpm** - Fast, disk space efficient package manager
+
+## 🎯 Demo Project: SonicHive
+
+This repository showcases an Ultra-tier implementation for SonicHive's soundproof pods, featuring:
+
+- ✅ Immersive 3D viewer with orbit controls
+- ✅ Multiple product variants (Solo, Duo, Quartet, Hexa, Home Pod)
+- ✅ Blueprint view with dimensions
+- ✅ AR-ready (WebXR + USDZ)
+- ✅ Glassmorphism UI with smooth animations
+- ✅ Parallax scrolling effects
+- ✅ Responsive design (desktop, tablet, mobile)
+- ✅ Production-ready build
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+- Node.js 18+ 
+- pnpm (recommended) or npm
+
+### Installation
 
 ```bash
-pnpm i        # or npm i / yarn
-pnpm dev      # http://localhost:5173
+# Install dependencies
+pnpm install
+
+# Start development server
+pnpm dev
+
+# Build for production
+pnpm build
+
+# Preview production build
+pnpm preview
 ```
 
-> If using npm:
->
-> ```bash
-> npm install
-> npm run dev
-> ```
+## 📱 Deployment
 
-Open the app, drag & drop a `.glb` model. Optionally select a `.usdz` for iOS Quick Look and tap the link shown.
+### Vercel (Recommended)
 
-### Building
+1. Push to GitHub
+2. Import project in Vercel
+3. Configure build settings:
+   - **Build Command:** `pnpm build`
+   - **Output Directory:** `dist`
+   - **Install Command:** `pnpm install`
 
-```bash
-pnpm build && pnpm preview
+### Environment Variables
+
+No environment variables required for basic deployment.
+
+## 📂 Project Structure
+
+```
+vulf-interactive/
+├── src/
+│   ├── ui/
+│   │   ├── App.tsx              # Main app component
+│   │   ├── LandingPage.tsx      # Landing/SOW page
+│   │   ├── Tier3Demo.tsx        # Ultra demo showcase
+│   │   ├── landing.css          # Landing styles
+│   │   ├── tier3.css            # Demo styles
+│   │   └── sonicHiveData.ts     # Product data
+│   ├── viewer.ts                # Three.js 3D viewer
+│   ├── main.tsx                 # App entry point
+│   └── types/                   # TypeScript definitions
+├── public/
+│   ├── assets/
+│   │   ├── main/                # Branding (logo, video)
+│   │   ├── images/              # Product images
+│   │   └── *.glb                # 3D models
+│   └── draco/                   # DRACO compression
+├── index.html
+├── package.json
+├── tsconfig.json
+└── vite.config.ts
 ```
 
-## Notes
+## 🎨 Features Implemented
 
-- **Android AR**: Works with Chrome (WebXR + hit-test). Click **Enter AR**.
-- **iOS AR**: Safari lacks WebXR (as of this template). Use the **View in AR (iOS Quick Look)** link by providing a `.usdz` file.
-- **Draco**: If your GLB is Draco-compressed, copy decoders into `/public/draco`. See that folder's README.
-- **HDRI**: By default we use `RoomEnvironment`. You can load an `.hdr` via `RGBELoader` if desired and set both `scene.environment` and `scene.background`.
+### Ultra Tier Capabilities:
+- **Advanced 3D Rendering** - Optimized Three.js setup with custom lighting
+- **Color Grading** - Material-level post-processing for vibrant textures
+- **GSAP Animations** - Scroll-triggered, parallax, and interactive effects
+- **Glassmorphism UI** - Modern, premium design aesthetic
+- **Product Switching** - Multi-variant 3D model loading
+- **Blueprint Mode** - Technical dimension overlay
+- **AR Integration** - WebXR ready with reticle positioning
+- **Responsive Design** - Optimized for all devices
 
-## Where do I put my models?
+## 📄 License
 
-Place files in `/public/assets/` (e.g. `public/assets/model.glb`), or simply drag & drop into the UI.
+© 2025 VULF Interactive. All rights reserved.
 
-## License
+## 📧 Contact
 
-MIT
-# Mattress-main
+**VULF Interactive**  
+Premium 3D & WebXR Development  
+[Website](https://vulfinteractive.com) | [Demo](/)
+
+---
+
+*Built with ❤️ by VULF Interactive*

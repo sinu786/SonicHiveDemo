@@ -258,7 +258,7 @@ const SHADOW_FEATHER_OUTER  = 0 // where feather ends
 let lggPass: any = null
 
 // Tweakables for initial zoom
-const INITIAL_FRAME_PADDING = 1.3
+const INITIAL_FRAME_PADDING = 1.8  // Increased to zoom out more
 const INITIAL_ZOOM_FACTOR   =1.5
 
 export type InitOptions = {
@@ -555,41 +555,16 @@ function _removeReveal(root: THREE.Object3D) {
   })
 }
 
-// Position model on right 2/3 of screen for desktop/landscape
+// Center model perfectly in the middle of the canvas
 function updateCameraPositionForLayout() {
   if (!camera || !renderer) return
   
-  const w = renderer.domElement.width
-  const h = renderer.domElement.height
-  const aspect = w / h
-  
-  // Desktop/landscape: aspect > 1.2 (wider than square)
-  // Mobile/portrait: aspect <= 1.2
-  const isDesktopOrLandscape = aspect > 1.2
-  
-  if (isDesktopOrLandscape && camera instanceof THREE.PerspectiveCamera) {
-    // Position model on the RIGHT 2/3 of the screen
-    // Use setViewOffset to shift the viewport
-    
-    // To center in right 2/3: shift view left by 1/6 of full width
-    // This is done by offsetting the camera's frustum
-    const fullWidth = w
-    const fullHeight = h
-    const offsetX = -w / 6  // Negative = shift view left, model appears right
-    
-    camera.setViewOffset(fullWidth, fullHeight, offsetX, 0, w, h)
-    
-    console.log(`📐 Desktop/Landscape: Model on right 2/3 (aspect: ${aspect.toFixed(2)}, offset: ${offsetX.toFixed(1)}px)`)
-  } else {
-    // Mobile/portrait: clear view offset to center the model
-    if (camera instanceof THREE.PerspectiveCamera) {
-      camera.clearViewOffset()
-    }
-    
-    console.log(`📱 Mobile/Portrait: Model centered (aspect: ${aspect.toFixed(2)})`)
+  // Always center the model - clear any view offset
+  if (camera instanceof THREE.PerspectiveCamera) {
+    camera.clearViewOffset()
+    camera.updateProjectionMatrix()
+    console.log('📐 Model centered perfectly in canvas')
   }
-  
-  camera.updateProjectionMatrix()
 }
 
 function fitDirLightShadowToBBox(light: THREE.DirectionalLight, box: THREE.Box3) {
@@ -669,6 +644,106 @@ function optimizeBakedTextureMaterials(root: THREE.Object3D) {
       // Boost material color to full white to avoid darkening the baked texture
       m.color.setRGB(1, 1, 1)
       
+      // ========== APPLY COLOR GRADING DIRECTLY TO MATERIAL TEXTURE ==========
+      // Inject color grading shader code into material's fragment shader
+      const prevOnBeforeCompile = m.onBeforeCompile
+      m.onBeforeCompile = (shader: any) => {
+        // Call previous onBeforeCompile if it exists
+        if (prevOnBeforeCompile) prevOnBeforeCompile.call(m, shader)
+        
+        // Store uniforms for color grading
+        shader.uniforms.uColorLift = { value: new THREE.Vector3(0.04, 0.04, 0.04) }
+        shader.uniforms.uColorGamma = { value: new THREE.Vector3(1.12, 1.12, 1.12) }
+        shader.uniforms.uColorGain = { value: new THREE.Vector3(1.18, 1.18, 1.18) }
+        shader.uniforms.uColorWarmth = { value: 0.15 }
+        shader.uniforms.uColorSaturation = { value: 1.65 }
+        shader.uniforms.uColorVibrance = { value: 0.55 }
+        shader.uniforms.uColorContrast = { value: 1.25 }
+        shader.uniforms.uSCurveStrength = { value: 0.75 }
+        
+        // Inject color grading functions into fragment shader
+        shader.fragmentShader = shader.fragmentShader.replace(
+          'void main() {',
+          `
+          uniform vec3 uColorLift;
+          uniform vec3 uColorGamma;
+          uniform vec3 uColorGain;
+          uniform float uColorWarmth;
+          uniform float uColorSaturation;
+          uniform float uColorVibrance;
+          uniform float uColorContrast;
+          uniform float uSCurveStrength;
+          
+          float colorGradingLuma(vec3 c) {
+            return dot(c, vec3(0.2126, 0.7152, 0.0722));
+          }
+          
+          vec3 applyLGG(vec3 c) {
+            c = c + uColorLift;
+            c = max(c, vec3(0.0));
+            c = pow(c, uColorGamma);
+            c = c * uColorGain;
+            return c;
+          }
+          
+          vec3 applyWarmth(vec3 c) {
+            vec3 w = vec3(1.0 + 0.08 * uColorWarmth, 1.0, 1.0 - 0.08 * uColorWarmth);
+            return c * w;
+          }
+          
+          vec3 applySaturation(vec3 c) {
+            float lum = colorGradingLuma(c);
+            vec3 gray = vec3(lum);
+            return mix(gray, c, uColorSaturation);
+          }
+          
+          vec3 applyVibrance(vec3 c) {
+            float lum = colorGradingLuma(c);
+            float mx = max(c.r, max(c.g, c.b));
+            float amt = (mx - lum) * (1.0 - uColorSaturation);
+            amt = clamp(amt, 0.0, 1.0);
+            float boost = mix(1.0, 1.0 + uColorVibrance, amt);
+            return mix(vec3(lum), c, boost);
+          }
+          
+          vec3 applyContrast(vec3 c) {
+            return (c - 0.5) * uColorContrast + 0.5;
+          }
+          
+          vec3 applySCurve(vec3 c) {
+            vec3 s = c * c * (3.0 - 2.0 * c);
+            return mix(c, s, uSCurveStrength);
+          }
+          
+          vec3 applyColorGrading(vec3 color) {
+            color = applyLGG(color);
+            color = applyWarmth(color);
+            color = applySaturation(color);
+            color = applyVibrance(color);
+            color = applyContrast(color);
+            color = applySCurve(color);
+            return color;
+          }
+          
+          void main() {
+          `
+        )
+        
+        // Apply color grading to final output before tone mapping
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <tonemapping_fragment>',
+          `
+          // Apply color grading to diffuse color
+          gl_FragColor.rgb = applyColorGrading(gl_FragColor.rgb);
+          
+          #include <tonemapping_fragment>
+          `
+        )
+        
+        m.userData.__colorGradingUniforms = shader.uniforms
+      }
+      m.customProgramCacheKey = () => 'colorgrading_' + (prevOnBeforeCompile ? 'prev' : 'new')
+      
       m.needsUpdate = true
     }
     
@@ -676,7 +751,7 @@ function optimizeBakedTextureMaterials(root: THREE.Object3D) {
     else if (o.material) simplifyMaterial(o.material)
   })
   
-  console.log('🎨 Materials optimized for baked textures (32-bit float/HDR, full brightness)')
+  console.log('🎨 Materials optimized with color grading applied directly to textures')
 }
 
 // ========== CUSTOM MATERIAL SHADERS - DISABLED FOR BAKED TEXTURE WORKFLOW ==========
@@ -1037,14 +1112,14 @@ function addMobileLightRig() {
   // Baked textures already contain lighting information from Blender
   // We only need ambient lighting to illuminate the baked texture data
   
-  // Ambient fill to display baked lighting
-  const ambient = new THREE.AmbientLight(0xffffff, 1.8)
+  // Ambient fill to display baked lighting (increased to show 32-bit textures properly)
+  const ambient = new THREE.AmbientLight(0xffffff, 2.5)
   scene.add(ambient)
 
   // Soft shadow-casting light from above
   const useShadows = !!(initOpts.enableShadows)
   if (useShadows) {
-    const shadowLight = new THREE.DirectionalLight(0xffffff, 0.8)  // Increased for more visible shadow
+    const shadowLight = new THREE.DirectionalLight(0xffffff, 1.5)  // Increased to show textures
     shadowLight.position.set(0, 10, 2)  // Directly above with slight offset for shape
     shadowLight.castShadow = true
     
@@ -1067,8 +1142,8 @@ function addMobileLightRig() {
     console.log('🌑 Ultra-soft blurred shadows enabled')
   }
   
-  // Subtle rim light to pop product against dark background (like reference)
-  const rimLight = new THREE.DirectionalLight(0x6a7a8a, 0.6)  // Blue-grey to match reference
+  // Rim light to add definition
+  const rimLight = new THREE.DirectionalLight(0xffffff, 0.8)  // White rim light
   rimLight.position.set(-3, 2, -3)
   scene.add(rimLight)
   
@@ -1105,15 +1180,15 @@ async function loadHDRIToEnv(url: string, showBackground: boolean) {
 function addStudioBackdrop() {
   if (!scene) return
 
-  // Dramatic dark studio backdrop with atmospheric gradient
+  // Apple-style light studio backdrop with subtle gradient
   const geo = new THREE.SphereGeometry(50, 64, 64)
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      uColorTop: { value: new THREE.Color(0x2d3d4d) },       // Blue-grey top to match reference
-      uColorHorizon: { value: new THREE.Color(0x4a5a6a) },   // Lighter at horizon
-      uColorBottom: { value: new THREE.Color(0x3a4a5a) }     // Medium blue-grey bottom
+      uColorTop: { value: new THREE.Color(0xffffff) },       // Pure white top
+      uColorHorizon: { value: new THREE.Color(0xf5f5f7) },   // Apple light grey
+      uColorBottom: { value: new THREE.Color(0xe8e8ed) }     // Slightly darker grey
     },
     vertexShader: `
       varying vec3 vWorldPos;
@@ -1129,17 +1204,17 @@ function addStudioBackdrop() {
       varying vec3 vWorldPos;
       
       void main() {
-        // Dramatic gradient: very dark top, lighter horizon, medium bottom
+        // Subtle gradient: light top to slightly darker bottom (Apple-style)
         float t = vWorldPos.y / 50.0; // Normalize to -1..1
         
         vec3 color;
         if (t > 0.0) {
-          // Upper half: dark top to horizon
-          float blend = smoothstep(0.0, 0.6, t);
+          // Upper half: white top to light grey horizon
+          float blend = smoothstep(0.0, 0.8, t);
           color = mix(uColorHorizon, uColorTop, blend);
         } else {
-          // Lower half: horizon to ground with cyclorama curve
-          float blend = smoothstep(-0.3, 0.0, t);
+          // Lower half: horizon to slightly darker grey (subtle cyclorama)
+          float blend = smoothstep(-0.4, 0.0, t);
           color = mix(uColorBottom, uColorHorizon, blend);
         }
         
@@ -1287,13 +1362,14 @@ export async function initViewer(container: HTMLElement, opts: InitOptions = {})
   
 
   // Renderer (mobile-lean)
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance', stencil: false, depth: true, preserveDrawingBuffer: false })
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true, preserveDrawingBuffer: false })
+  renderer.setClearColor(0xffffff, 1)  // White background to match page
 
   // Color management & tonemapping (optimized for 32-bit float/HDR baked textures)
   renderer.outputColorSpace = THREE.SRGBColorSpace as any
-  renderer.toneMapping = (opts.useACES ?? true) ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping
-  // MAXIMUM exposure for extreme vibrant, high-impact look
-  renderer.toneMappingExposure = (initOpts.toneMappingExposure ?? 2.2)
+  renderer.toneMapping = THREE.NoToneMapping  // No tone mapping for accurate texture display
+  // Normal exposure to show 32-bit textures as-is
+  renderer.toneMappingExposure = 1.0
   console.log(`🎬 ACES Filmic tone mapping: Exposure ${renderer.toneMappingExposure} (EXTREME HDR)`)
 
   // Raytraced-quality shadows with maximum interpolation
@@ -1352,7 +1428,7 @@ export async function initViewer(container: HTMLElement, opts: InitOptions = {})
 
   // Scene + Camera
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x2d3d4d)  // Blue-grey to match reference
+  scene.background = new THREE.Color(0xffffff)  // White background to match page
   camera = new THREE.PerspectiveCamera(35, 1, 0.01, 20000)
   camera.position.set(1.5, 1, 3)
   scene.add(camera)
@@ -1377,62 +1453,31 @@ export async function initViewer(container: HTMLElement, opts: InitOptions = {})
   ssaoPass = null
   console.log('🚫 SSAO disabled for better performance')
   
-  // ========== PROFESSIONAL COLOR GRADING ==========
-  lggPass = new ShaderPass(LggWarmthShader)
-  composer.addPass(lggPass)
+  // ========== POST-PROCESSING DISABLED FOR PURE WHITE BACKGROUND ==========
+  // All color grading, S-curve, bloom, and vignette effects disabled
+  // to ensure pure bright white background and accurate 32-bit texture display
   
-  if (initOpts.toneInit) {
-    const t = initOpts.toneInit
-    if (t.curve) {
-      renderer.toneMapping =
-        t.curve === 'ACES'     ? THREE.ACESFilmicToneMapping :
-        t.curve === 'Reinhard' ? THREE.ReinhardToneMapping :
-        t.curve === 'Cineon'   ? THREE.CineonToneMapping :
-        t.curve === 'Linear'   ? THREE.LinearToneMapping :
-                                 THREE.NoToneMapping
-    }
-    if (typeof t.exposure   === 'number') renderer.toneMappingExposure = t.exposure
-    if (t.lift)   lggPass.uniforms.uLift.value.set(...t.lift)
-    if (t.gamma)  lggPass.uniforms.uGamma.value.set(...t.gamma)
-    if (t.gain)   lggPass.uniforms.uGain.value.set(...t.gain)
-    if (typeof t.warmth     === 'number') lggPass.uniforms.uWarmth.value     = t.warmth
-    if (typeof t.saturation === 'number') lggPass.uniforms.uSaturation.value = t.saturation
-    if (typeof t.vibrance   === 'number') lggPass.uniforms.uVibrance.value   = t.vibrance
-    if (typeof t.contrast   === 'number') lggPass.uniforms.uContrast.value   = t.contrast
-  } else {
-    // EXTREME color grading - maximum vibrant, high-impact look
-    lggPass.uniforms.uLift.value.set(0.04, 0.04, 0.04)       // Open up shadows more
-    lggPass.uniforms.uGamma.value.set(1.12, 1.12, 1.12)     // Aggressive mid-tone boost
-    lggPass.uniforms.uGain.value.set(1.18, 1.18, 1.18)      // Very strong highlights
-    lggPass.uniforms.uWarmth.value = 0.15                     // Warmer tone
-    lggPass.uniforms.uSaturation.value = 1.65                 // EXTREME vibrant colors
-    lggPass.uniforms.uVibrance.value = 0.55                   // Maximum color intensity
-    lggPass.uniforms.uContrast.value = 1.25                   // Very strong contrast
-    console.log('🎨 EXTREME color grading + S-Curve - maximum punch!')
-  }
+  lggPass = null  // Color grading disabled
+  sCurvePass = null  // S-curve disabled
   
-  // ========== STRONG S-CURVE CONTRAST ==========
-  sCurvePass = new ShaderPass(SCurveShader)
-  sCurvePass.uniforms['uStrength'].value = 0.75  // Strong S-curve (0-1, higher = more dramatic)
-  composer.addPass(sCurvePass)
-  console.log('📈 Strong S-Curve contrast applied - crushes blacks, pops highlights!')
+  // No color grading passes added
+  console.log('🚫 All color grading and post-processing disabled for clean white')
   
-  // ========== AGGRESSIVE BLOOM ==========
+  // ========== BLOOM DISABLED ==========
   bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1),
-    initOpts.bloomStrength ?? 0.05,    // Very strong glow
-    initOpts.bloomRadius   ?? 2.0,     // Wide spread for maximum impact
-    initOpts.bloomThreshold?? 0     // Lower threshold = aggressive bloom
+    initOpts.bloomStrength ?? 0.0,     // Disabled
+    initOpts.bloomRadius   ?? 0.1,     // Minimal
+    initOpts.bloomThreshold?? 1.0      // High threshold = no bloom
   )
-  bloomPass.enabled = opts.bloomEnabled ?? true
+  bloomPass.enabled = false  // Disabled
   composer.addPass(bloomPass)
-  console.log('✨ AGGRESSIVE bloom: Strength 0.35, Radius 1.0, Threshold 0.65')
+  console.log('✨ Bloom disabled')
   
-  // ========== SUBTLE VIGNETTE FOR FOCUS ==========
-  const vignettePass = new ShaderPass(CustomVignetteShader)
-  vignettePass.uniforms['uIntensity'].value = 0.35    // How dark the edges get (0..1)
-  vignettePass.uniforms['uSmoothness'].value = 0.4    // How gradual the fade is (0..1)
-composer.addPass(vignettePass)
-  console.log('🎯 Custom vignette: darkens edges, keeps center bright')
+  // ========== VIGNETTE DISABLED ==========
+  // const vignettePass = new ShaderPass(CustomVignetteShader)
+  // vignettePass.uniforms['uIntensity'].value = 0.0
+  // composer.addPass(vignettePass)
+  console.log('🚫 Vignette disabled for pure white background')
   
   outputPass = new OutputPass()
   composer.addPass(outputPass)
@@ -1506,8 +1551,9 @@ if (_sssEnabled && keyLight && _sssUniformPools.length) {
 
   return {
     setTone: (opts) => {
-      if (!renderer || !lggPass) return
-  
+      if (!renderer) return
+      
+      // Post-processing disabled, only tone mapping curve and exposure can be adjusted
       if (opts.curve) {
         renderer.toneMapping =
           opts.curve === 'ACES'     ? THREE.ACESFilmicToneMapping :
@@ -1518,10 +1564,7 @@ if (_sssEnabled && keyLight && _sssUniformPools.length) {
       }
   
       if (typeof opts.exposure === 'number') renderer.toneMappingExposure = opts.exposure
-      if (opts.lift)  lggPass.uniforms.uLift.value.set(...opts.lift)
-      if (opts.gamma) lggPass.uniforms.uGamma.value.set(...opts.gamma)
-      if (opts.gain)  lggPass.uniforms.uGain.value.set(...opts.gain)
-      if (typeof opts.warmth === 'number') lggPass.uniforms.uWarmth.value = opts.warmth
+      console.log('⚠️ Color grading disabled, only tone mapping available')
     },
 
     
@@ -1599,18 +1642,12 @@ if (_sssEnabled && keyLight && _sssUniformPools.length) {
     },
     
     setPostProcessing: ({ saturation, vibrance, contrast, warmth, sCurveStrength, exposure }) => {
-      if (lggPass) {
-        if (typeof saturation === 'number') lggPass.uniforms.uSaturation.value = saturation
-        if (typeof vibrance === 'number') lggPass.uniforms.uVibrance.value = vibrance
-        if (typeof contrast === 'number') lggPass.uniforms.uContrast.value = contrast
-        if (typeof warmth === 'number') lggPass.uniforms.uWarmth.value = warmth
-      }
-      if (sCurvePass && typeof sCurveStrength === 'number') {
-        sCurvePass.uniforms.uStrength.value = sCurveStrength
-      }
+      // Post-processing disabled for clean white background
+      // Only exposure can be adjusted via tone mapping
       if (renderer && typeof exposure === 'number') {
         renderer.toneMappingExposure = exposure
       }
+      console.log('⚠️ Post-processing is disabled for clean white background')
     },
   }
   
@@ -1763,15 +1800,15 @@ function addReflectiveGround(y: number) {
   // No mirror
   groundMirror = null as any
 
-  // Studio ground plane with dramatic spotlight effect
+  // Apple-style clean ground plane with subtle gradient
   const groundGeo = new THREE.CircleGeometry(radius * 1.5, 128)
   const groundMat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     uniforms: {
-      uSpotlightColor: { value: new THREE.Color(0x5a6a7a) },  // Brighter spotlight center
-      uMidColor: { value: new THREE.Color(0x4a5a6a) },         // Mid-tone to match horizon
-      uEdgeColor: { value: new THREE.Color(0x3a4a5a) }         // Matches backdrop bottom for seamless blend
+      uSpotlightColor: { value: new THREE.Color(0xffffff) },  // White center (Apple-style)
+      uMidColor: { value: new THREE.Color(0xf5f5f7) },         // Light grey mid
+      uEdgeColor: { value: new THREE.Color(0xe8e8ed) }         // Slightly darker edge
     },
     vertexShader: `
       varying vec2 vUv;
@@ -1790,20 +1827,20 @@ function addReflectiveGround(y: number) {
         vec2 center = vUv * 2.0 - 1.0;
         float dist = length(center);
         
-        // Dramatic radial spotlight effect (brighter center, darker edges)
+        // Subtle radial gradient (Apple-style minimal)
         vec3 color;
-        if (dist < 0.3) {
-          // Hot spot in center
-          float blend = smoothstep(0.0, 0.3, dist);
+        if (dist < 0.4) {
+          // Bright center (subtle)
+          float blend = smoothstep(0.0, 0.4, dist);
           color = mix(uSpotlightColor, uMidColor, blend);
         } else {
-          // Falloff to edges
-          float blend = smoothstep(0.3, 0.85, dist);
+          // Gentle falloff to edges
+          float blend = smoothstep(0.4, 0.9, dist);
           color = mix(uMidColor, uEdgeColor, blend);
         }
         
-        // Smooth fade at far edges to blend with backdrop
-        float alpha = 1.0 - smoothstep(0.75, 1.0, dist);
+        // Very smooth fade at far edges
+        float alpha = 1.0 - smoothstep(0.85, 1.0, dist);
         
         gl_FragColor = vec4(color, alpha);
       }
@@ -1818,7 +1855,7 @@ function addReflectiveGround(y: number) {
   
   // Add invisible shadow-receiving plane slightly above the gradient ground
   const shadowGeo = new THREE.CircleGeometry(radius * 1.5, 64)
-  const shadowMat = new THREE.ShadowMaterial({ opacity: 0.65 })  // More visible shadow
+  const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 })  // Subtle Apple-style shadow
   const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat)
   shadowPlane.rotateX(-Math.PI / 2)
   shadowPlane.position.set(0, y + 0.001, 0)  // Slightly above to prevent z-fighting
@@ -2022,9 +2059,9 @@ async function loadGLB(fileOrUrl: File | string) {
     )
   })
 
-  // Place ground at model base with a tiny offset
-  groundBaseY = bbox.min.y - GROUND_PAD
-  addReflectiveGround(groundBaseY)
+  // Ground removed for clean transparent background
+  // groundBaseY = bbox.min.y - GROUND_PAD
+  // addReflectiveGround(groundBaseY)
 }
 
 function _injectSSSShader(m: any, opts: SSSOpts = {}) {
