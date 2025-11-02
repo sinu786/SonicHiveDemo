@@ -191,6 +191,7 @@ export const contactInfo = {
     }
   ],
   social: {
+    facebook: '#',
     linkedin: '#',
     instagram: '#',
     twitter: '#'
